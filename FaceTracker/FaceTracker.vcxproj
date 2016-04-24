@@ -178,6 +178,7 @@
     <ClCompile Include="src\lib\Tracker.cc" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\dsm\dsm.h" />
     <ClInclude Include="include\FaceTracker\CLM.h" />
     <ClInclude Include="include\FaceTracker\FCheck.h" />
     <ClInclude Include="include\FaceTracker\FDet.h" />

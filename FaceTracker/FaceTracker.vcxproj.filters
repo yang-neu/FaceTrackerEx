@@ -68,5 +68,8 @@
     <ClInclude Include="include\FaceTracker\Tracker.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="include\dsm\dsm.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

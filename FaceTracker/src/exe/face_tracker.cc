@@ -39,18 +39,15 @@
 ///////////////////////////////////////////////////////////////////////////////
 #include <FaceTracker/Tracker.h>
 #include <opencv/highgui.h>
-#include <iostream>
-#include <opencv\cv.h>
-#include <opencv/cxcore.h>
-
 #include <opencv2/opencv.hpp>
-//#include <opencv2/core/core.hpp>
-//#include <opencv2/highgui/highgui.hpp>
 
 #include <windows.h>
 #include <stdio.h>
 #include <vector>
+#include <iostream>
 #include <atlconv.h>    //for W2T()
+
+#include "dsm/dsm.h"
 
 using namespace std;
 using namespace cv;
@@ -64,6 +61,7 @@ Mat matLOverLay; //LandMark OverLay
 Mat matMouseLay; //the overlay for mouse cursor
 Mat matZoom;     //for zoom image
 Mat matDisp;     //for imshow
+Mat matLandMark; //the land mark form dsm image list
 
 double fZoom = 1;
 bool bGetfoucs = false;
@@ -156,7 +154,7 @@ int findShape(Point op,Mat &shape) {
 	Scalar cr = CV_RGB(0xFF, 0x00, 0x00); //赤色
 	Scalar cw = CV_RGB(0xFF, 0xFF, 0xFF); //白色 
 
-	int distance2;
+	int distance2;   //距離の平方
 
 	for (int i = 0; i < n; i++) {
 		//if (visi.at<int>(i, 0) == 0)continue;
@@ -456,20 +454,114 @@ vector<string> get_all_bmp_files_names_within_list(string list)
 	vector<string> names;
 
 	std::ifstream ifs(list);
-	char str[256];
+	string lineBuf;
 
 	if (ifs.fail()) {
 		std::cerr << "failed" << std::endl;
 		return names;
 	}
 
-	while (ifs.getline(str, 256-1))
+	while (getline(ifs,lineBuf))
 	{
 		//std::cout << str << std::endl;
-		names.push_back(str);
+		names.push_back(lineBuf);
 	}
 
 	return names;
+}
+
+//@param  IN   list 画像名とLandMarkデータを保存するリストファイル名
+//@param  OUT  lm	  LandMark Matriex
+//@Return name 画像ファイル名配列  0番目は画像格納フォルダ
+vector<string> get_Image_WithLandMark_From_dsmlist(string list,Mat &lm)
+{
+	vector<string> imgList;
+
+	std::ifstream ifs(list);
+	if (ifs.fail()) {
+		std::cerr << "failed to open dsm list!" << std::endl;
+		return imgList;
+	}
+
+	string lineBuf;
+	int i = 1;
+	int rows = -1;
+	int cols = -1;
+
+	while (getline(ifs, lineBuf))
+	{
+		string token;
+		istringstream stream(lineBuf);
+
+		if (1 == i) {
+			//1行目　画像格納フォルダ
+			i++;
+			continue;
+		}
+		else if (i > 1 && i <5) {
+			//2行目　ファイル数  189
+			rows = 189;
+			//3行目　LandMark名称　全部で35個ある
+			cols = 35;
+			//とりあえず、固定値でMatを初期化
+			lm = Mat::zeros(Size(cols, rows), CV_16UC3);
+//			lm = Mat::zeros(Size(cols, rows), CV_32FC3);
+
+			//4行名　5行目以下データのタイトル
+			i++;
+			continue;
+		}
+		else
+		{
+			int j = 1;
+			//1行のうち、文字列とコンマを分割する
+			while (getline(stream, token, ',')) {
+
+				if (1 == j) {
+					//1列目　画像ファイル名　
+					imgList.push_back(token);
+					j++;
+					continue;
+				}
+				else if (2 == j) {
+					//2列目　ファイル連番
+					j++;
+					continue;
+				}
+				else {
+					//3列目から　x,y,t（LandMarkの状態）3Channels
+
+					Vec3w &p = lm.at<cv::Vec3w>((i - 4 - 1), (j - 2 -1) / 3);  //row,col
+
+					int val = 0;
+					if(std::all_of(token.cbegin(), token.cend(), isdigit))
+					{
+						// string の構成文字列が全て数字の場合に true になります。
+						val = stoi(token);
+						val = (val > 0x0FFFF) ? 0 : val;
+					}
+
+					p[(j - 2 - 1) % 3] = val;    //0:x 1:y 2:t
+
+				}
+				cout << token << "(" << i << "," << j << "),";
+				j++;
+
+				if (cols >= 0 && (j - 2) > (cols * 3)) {
+					break;
+				}
+			}
+		}
+		cout << endl;
+		i++;
+
+		if (rows >= 0 && (i-4) > rows)
+		{
+			break;
+		}
+	}
+
+	return imgList;
 }
 
 //=============================================================================
@@ -508,7 +600,8 @@ int main(int argc, const char* argv[])
 	  bmpList = get_all_bmp_files_names_within_folder(path);
   }
   else {
-	  bmpList = get_all_bmp_files_names_within_list(argv[1]);
+//	  bmpList = get_all_bmp_files_names_within_list(argv[1]);
+	  bmpList = get_Image_WithLandMark_From_dsmlist(argv[1], matLandMark);
   }
   //the parament for image save
   vector<int> param = vector<int>(2);
