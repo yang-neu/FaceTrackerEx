@@ -62,10 +62,23 @@ Mat matMouseLay; //the overlay for mouse cursor
 Mat matZoom;     //for zoom image
 Mat matDisp;     //for imshow
 Mat matLandMark; //the land mark form dsm image list
+Mat matLmLine;   //one line of landmark list
 
 double fZoom = 1;
 bool bGetfoucs = false;
 int indexShape = -1;
+
+/*!
+* 空白(スペース，タブ)を削除
+* @param[inout] buf 処理文字列
+*/
+inline void DeleteSpace(string &buf)
+{
+	size_t pos;
+	while ((pos = buf.find_first_of(" 　\t")) != string::npos) {
+		buf.erase(pos, 1);
+	}
+}
 
 Point cvtOrgCoordinate(Point p) {
 	Point op;
@@ -84,27 +97,33 @@ void getFoucs(int index) {
 
 void lostFoucs(Point op) {
 
-	//		p1 = cv::Point(shape.at<double>(i, 0), shape.at<double>(i + n, 0));
-	int n = pModel->_shape.rows / 2;
+	int n = matLmLine.cols; 
 
-	if ( indexShape < 0 ||(indexShape + n) > n * 2) return;
+	if ( indexShape < 0 ||indexShape > n) return;
 
-	double &dx = pModel->_shape.at<double>(indexShape);
-	dx = op.x;
+	Vec3w &p = matLmLine.at<Vec3w>(indexShape);
 
-	double &dy = pModel->_shape.at<double>(indexShape + n);
-	dy = op.y;
+	p[0] = op.x;
+	p[1] = op.y;
 
-	cv::Point p1; cv::Scalar c;
+	cv::Point p1; cv::Scalar cr,cw;
 
-	c = CV_RGB(255, 0, 0); //赤色
+	cr = CV_RGB(255, 0, 0); //赤色
+	cw = CV_RGB(0xFF,0xFF,0xFF); //白色
 
 	matLOverLay = Mat::zeros(Size(matDisp.cols, matDisp.rows), CV_8UC3);
 
 	for (int i = 0; i < n; i++) {
-		p1 = cv::Point(pModel->_shape.at<double>(i, 0), pModel->_shape.at<double>(i + n, 0));
-		cv::circle(matLOverLay, p1, 2, c);
-		//cv::putText(image, std::to_string(i), p1, FONT_HERSHEY_SIMPLEX, 0.3, c);
+
+		Vec3w &p = matLmLine.at<Vec3w>(0, i);
+		Point p1(p[0], p[1]);  //0:x, 1:y ,2:t
+		if (0 == p[2])
+		{
+			circle(matLOverLay, p1, 2, cr);
+		}
+		else {
+			circle(matLOverLay, p1, 2, cw);
+		}
 	}
 
 
@@ -149,7 +168,7 @@ void Zoom(int delta) {
 
 int findShape(Point op,Mat &shape) {
 
-	int n = shape.rows / 2;
+	int n = shape.cols;// rows / 2;
 	Point p1;
 	Scalar cr = CV_RGB(0xFF, 0x00, 0x00); //赤色
 	Scalar cw = CV_RGB(0xFF, 0xFF, 0xFF); //白色 
@@ -158,7 +177,11 @@ int findShape(Point op,Mat &shape) {
 
 	for (int i = 0; i < n; i++) {
 		//if (visi.at<int>(i, 0) == 0)continue;
-		p1 = cv::Point(shape.at<double>(i, 0), shape.at<double>(i + n, 0));
+		//p1 = cv::Point(shape.at<double>(i, 0), shape.at<double>(i + n, 0));
+		Vec3w &p = shape.at<Vec3w>(i);
+
+		if (p[2] != 0) continue;
+		p1 = cv::Point(p[0], p[1]);// shape.at<double>(i + n, 0));
 
 
 		distance2 = (p1.x - op.x)*(p1.x - op.x) + (p1.y - op.y)*(p1.y - op.y);
@@ -185,7 +208,7 @@ void onMouseMove_Shift(int x, int y, void *p = NULL) {
 	op = cvtOrgCoordinate(Point(x, y));
 
 	if (!bGetfoucs) {
-		int i = findShape(op, pModel->_shape);
+		int i = findShape(op, matLmLine);// pModel->_shape);
 		if (i >= 0) {
 			getFoucs(i);
 		}
@@ -284,6 +307,23 @@ void onMouse(int event, int x, int y, int flag, void*)
 	std::cout << desc << " (" << x << ", " << y << ")" << std::endl;
 }
 
+void tran_Shape2LandMark(Mat &shape, Mat &visi, Mat &lm) {
+	int n = shape.rows / 2;
+	for (int i = 0; i < lm.cols; i++) {
+		Vec3w &p = lm.at<Vec3w>(i);
+
+		Point p1 = cv::Point(shape.at<double>(mapping[i], 0), shape.at<double>(mapping[i] + n, 0));
+
+		p[0] = p1.x;
+		p[1] = p1.y;
+		p[2] = 0;
+		if (visi.at<int>(mapping[i], 0) == 0) {
+			p[2] = 2; //隠れたTBD
+		}
+
+	}
+}
+
 
 //=============================================================================
 void Draw(cv::Mat &image,cv::Mat &shape,cv::Mat &con,cv::Mat &tri,cv::Mat &visi)
@@ -291,41 +331,41 @@ void Draw(cv::Mat &image,cv::Mat &shape,cv::Mat &con,cv::Mat &tri,cv::Mat &visi)
   int i,n = shape.rows/2; cv::Point p1,p2; cv::Scalar c;
 
   //draw triangulation
-  //c = CV_RGB(0, 0, 0); //黒色
- // c = CV_RGB(0x00, 0xFF, 0x00); //緑色
- // for(i = 0; i < tri.rows; i++){
- //   if(visi.at<int>(tri.at<int>(i,0),0) == 0 ||
- //      visi.at<int>(tri.at<int>(i,1),0) == 0 ||
- //      visi.at<int>(tri.at<int>(i,2),0) == 0)continue;
- //   p1 = cv::Point(shape.at<double>(tri.at<int>(i,0),0),
-	//	   shape.at<double>(tri.at<int>(i,0)+n,0));
- //   p2 = cv::Point(shape.at<double>(tri.at<int>(i,1),0),
-	//	   shape.at<double>(tri.at<int>(i,1)+n,0));
- //   
-	//
-	//cv::line(image,p1,p2,c);
- //   p1 = cv::Point(shape.at<double>(tri.at<int>(i,0),0),
-	//	   shape.at<double>(tri.at<int>(i,0)+n,0));
- //   p2 = cv::Point(shape.at<double>(tri.at<int>(i,2),0),
-	//	   shape.at<double>(tri.at<int>(i,2)+n,0));
- //   cv::line(image,p1,p2,c);
- //   p1 = cv::Point(shape.at<double>(tri.at<int>(i,2),0),
-	//	   shape.at<double>(tri.at<int>(i,2)+n,0));
- //   p2 = cv::Point(shape.at<double>(tri.at<int>(i,1),0),
-	//	   shape.at<double>(tri.at<int>(i,1)+n,0));
- //   cv::line(image,p1,p2,c);
- // }
- // //draw connections
- // c = CV_RGB(0,0,255); //青色
- // for(i = 0; i < con.cols; i++){
- //   if(visi.at<int>(con.at<int>(0,i),0) == 0 ||
- //      visi.at<int>(con.at<int>(1,i),0) == 0)continue;
- //   p1 = cv::Point(shape.at<double>(con.at<int>(0,i),0),
-	//	   shape.at<double>(con.at<int>(0,i)+n,0));
- //   p2 = cv::Point(shape.at<double>(con.at<int>(1,i),0),
-	//	   shape.at<double>(con.at<int>(1,i)+n,0));
- //   cv::line(image,p1,p2,c,1);
- // }
+  c = CV_RGB(0, 0, 0); //黒色
+  c = CV_RGB(0x00, 0xFF, 0x00); //緑色
+  for(i = 0; i < tri.rows; i++){
+    if(visi.at<int>(tri.at<int>(i,0),0) == 0 ||
+       visi.at<int>(tri.at<int>(i,1),0) == 0 ||
+       visi.at<int>(tri.at<int>(i,2),0) == 0)continue;
+    p1 = cv::Point(shape.at<double>(tri.at<int>(i,0),0),
+		   shape.at<double>(tri.at<int>(i,0)+n,0));
+    p2 = cv::Point(shape.at<double>(tri.at<int>(i,1),0),
+		   shape.at<double>(tri.at<int>(i,1)+n,0));
+    
+	
+	cv::line(image,p1,p2,c);
+    p1 = cv::Point(shape.at<double>(tri.at<int>(i,0),0),
+		   shape.at<double>(tri.at<int>(i,0)+n,0));
+    p2 = cv::Point(shape.at<double>(tri.at<int>(i,2),0),
+		   shape.at<double>(tri.at<int>(i,2)+n,0));
+    cv::line(image,p1,p2,c);
+    p1 = cv::Point(shape.at<double>(tri.at<int>(i,2),0),
+		   shape.at<double>(tri.at<int>(i,2)+n,0));
+    p2 = cv::Point(shape.at<double>(tri.at<int>(i,1),0),
+		   shape.at<double>(tri.at<int>(i,1)+n,0));
+    cv::line(image,p1,p2,c);
+  }
+  //draw connections
+  c = CV_RGB(0,0,255); //青色
+  for(i = 0; i < con.cols; i++){
+    if(visi.at<int>(con.at<int>(0,i),0) == 0 ||
+       visi.at<int>(con.at<int>(1,i),0) == 0)continue;
+    p1 = cv::Point(shape.at<double>(con.at<int>(0,i),0),
+		   shape.at<double>(con.at<int>(0,i)+n,0));
+    p2 = cv::Point(shape.at<double>(con.at<int>(1,i),0),
+		   shape.at<double>(con.at<int>(1,i)+n,0));
+    cv::line(image,p1,p2,c,1);
+  }
   //draw points
   c = CV_RGB(255, 0, 0); //赤色
   //c = CV_RGB(255, 255, 0); //黄色
@@ -338,6 +378,28 @@ void Draw(cv::Mat &image,cv::Mat &shape,cv::Mat &con,cv::Mat &tri,cv::Mat &visi)
   return;
 }
 
+void DrawDsmLandMark(Mat &img,Mat &matLM) {
+	
+	Scalar cr = CV_RGB(255, 0, 0); //赤色
+	Scalar cw = CV_RGB(255, 255, 255); //白色
+
+	for (int i = 0; i < matLM.cols; i++) {
+
+		Vec3w &p= matLM.at<Vec3w>(0,i);
+		Point p1(p[0],p[1]);  //0:x, 1:y ,2:t
+		if (0 == p[2])
+		{
+			circle(img, p1, 2, cr);
+		}
+		else {
+			circle(img, p1, 2, cw);
+		}
+		//cv::putText(image, std::to_string(i), p1, FONT_HERSHEY_SIMPLEX, 0.3, c);
+	}
+	return;
+
+
+}
 //=============================================================================
 int parse_cmd(int argc, const char** argv,
 	      char* ftFile,char* conFile,char* triFile,
@@ -470,14 +532,69 @@ vector<string> get_all_bmp_files_names_within_list(string list)
 	return names;
 }
 
-//@param  IN   list 画像名とLandMarkデータを保存するリストファイル名
+void save_DSM_Modi_Result(string fn,Mat &lm) {
+
+	ifstream ifs(fn);
+	if (ifs.fail()) {
+		std::cerr << "failed to open dsm list!" << std::endl;
+		return;
+	}
+
+	stringstream saveFn;
+	string token;
+	string lineBuf;
+	int i = 1;
+
+	istringstream s(fn);
+	getline(s, token, '.');
+
+	saveFn << token << "_" << getTickCount() << ".csv";
+
+	ofstream ofs(saveFn.str()); //ファイル出力ストリーム
+	if (ofs.fail()) {
+		std::cerr << "failed to create " << saveFn.str() << "!" << std::endl;
+		return;
+	}
+
+
+	while (getline(ifs, lineBuf))
+	{
+		istringstream stream(lineBuf);
+
+		if (i < 5) {
+			//1行2列目　画像格納フォルダ
+			//2行目　ファイル数  189
+			//3行目　LandMark名称　全部で35個ある
+			//4行名　5行目以下データのタイトル
+			ofs << lineBuf << endl;
+			i++;
+			continue;
+		}
+		break;
+	}
+
+	for (int i = 0; i < lm.rows; i++) {
+		Mat line(lm(Rect(0,i,lm.cols,1)));
+		ofs << i + 1;
+		for (int j = 0; j < line.cols; j++) {
+			Vec3w p = line.at<Vec3w>(j);
+			ofs << "," << p[0] << "," << p[1] << "," << p[2];
+		}
+		ofs << endl;
+	}
+
+	ofs.close();
+
+}
+
+//@param  IN   fn 画像名とLandMarkデータを保存するリストファイル名
 //@param  OUT  lm	  LandMark Matriex
 //@Return name 画像ファイル名配列  0番目は画像格納フォルダ
-vector<string> get_Image_WithLandMark_From_dsmlist(string list,Mat &lm)
+vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 {
 	vector<string> imgList;
 
-	std::ifstream ifs(list);
+	std::ifstream ifs(fn);
 	if (ifs.fail()) {
 		std::cerr << "failed to open dsm list!" << std::endl;
 		return imgList;
@@ -494,7 +611,14 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string list,Mat &lm)
 		istringstream stream(lineBuf);
 
 		if (1 == i) {
-			//1行目　画像格納フォルダ
+			//1行2列目　画像格納フォルダ
+			getline(stream, token, ',');
+			getline(stream, token, ',');
+			if (!token.empty())
+			{
+				imgList.push_back(token);
+			}
+
 			i++;
 			continue;
 		}
@@ -519,6 +643,8 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string list,Mat &lm)
 
 				if (1 == j) {
 					//1列目　画像ファイル名　
+					if (token.empty()) break;
+
 					imgList.push_back(token);
 					j++;
 					continue;
@@ -534,6 +660,7 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string list,Mat &lm)
 					Vec3w &p = lm.at<cv::Vec3w>((i - 4 - 1), (j - 2 -1) / 3);  //row,col
 
 					int val = 0;
+					DeleteSpace(token);
 					if(std::all_of(token.cbegin(), token.cend(), isdigit))
 					{
 						// string の構成文字列が全て数字の場合に true になります。
@@ -561,6 +688,7 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string list,Mat &lm)
 		}
 	}
 
+	ifs.close();
 	return imgList;
 }
 
@@ -612,20 +740,27 @@ int main(int argc, const char* argv[])
   //cvNamedWindow("Face Tracker",1);
   std::cout << "Hot keys: "        << std::endl
 	    << "\t ESC - quit"     << std::endl
-	    << "\t d   - Redetect" << std::endl;
+	    << "\t d   - Redetect" << std::endl
+	    << "\t s   - Save modify result";
 
   //loop until quit (i.e user presses ESC)
   bool failed = true;
+
+  int numFrame = 0;
+
+  path = bmpList.at(0);
+  bmpList.erase(bmpList.begin());
+
   while(!bmpList.empty()){ 
 
     //grab image, resize and flip
-    //IplImage* I = cvQueryFrame(camera); if(!I)continue; frame = I;
 	  stringstream fileName;
 	  stringstream resultFile;
-	  fileName << path << bmpList.at(0);
+
+	  fileName << path << bmpList.at(numFrame);
 	  resultFile << "./result/" << bmpList.at(0);
 
-	  bmpList.erase(bmpList.begin());
+	  //bmpList.erase(bmpList.begin());
 	  frame = cv::imread(fileName.str().c_str());
 //	  cap >> frame;
 
@@ -644,7 +779,7 @@ int main(int argc, const char* argv[])
 	  }else{
 		  cv::resize(frame, im, cv::Size((int)scale*frame.cols, (int)scale*frame.rows));
 	  }
-      cv::flip(im,im,1); 
+      cv::flip(im,im,1);  //左右反転 
 	  cv::cvtColor(im,gray,CV_BGR2GRAY);
 
     //track this image
@@ -656,11 +791,14 @@ int main(int argc, const char* argv[])
 		wSize = wSize1;
 	}
 
+	matLmLine = matLandMark(Rect(0, numFrame, matLandMark.cols, 1));
+
     if(model.Track(gray,wSize,fpd,nIter,clamp,fTol,fcheck) == 0){
       int idx = model._clm.GetViewIdx(); 
 	  failed = false;
 	  //Draw(im, model._shape, con, tri, model._clm._visi[idx]);
-	  Draw(matLOverLay, model._shape, con, tri, model._clm._visi[idx]);
+	  //Draw(matLOverLay, model._shape, con, tri, model._clm._visi[idx]);
+	  tran_Shape2LandMark(model._shape, model._clm._visi[idx], matLmLine);
 	}else{
       if(show){
 		  cv::Mat R(im,cvRect(0,0,150,50)); 
@@ -669,7 +807,10 @@ int main(int argc, const char* argv[])
       model.FrameReset(); 
 	  failed = true;
     }     
-    
+
+
+	DrawDsmLandMark(matLOverLay, matLmLine);
+
 	//draw framerate on display image 
     if(fnum >= 9) {      
       t1 = cvGetTickCount();
@@ -681,7 +822,7 @@ int main(int argc, const char* argv[])
 
     if(show) {
       sprintf(sss,"%d frames/sec",(int)round(fps)); text = sss;
-      cv::putText(im,text,cv::Point(10,20),CV_FONT_HERSHEY_SIMPLEX,0.5,CV_RGB(255,255,255));
+      cv::putText(im, bmpList.at(numFrame),cv::Point(10,20),CV_FONT_HERSHEY_SIMPLEX,0.5,CV_RGB(255,255,255));
     }
 
 
@@ -703,6 +844,23 @@ int main(int argc, const char* argv[])
 	}else	if (char(c) == 'd') {
 			model.FrameReset();
 	}
+	else if (char(c) == 's') {
+		save_DSM_Modi_Result(argv[1], matLandMark);
+	}
+	else if (0x250000 == c) {
+		//←
+		numFrame--;
+		numFrame < 0 ? (numFrame = 0) : numFrame;
+	}
+	else if (0x270000 == c) {
+		//→
+		numFrame++;
+		if (numFrame >= bmpList.size()) {
+			numFrame = 0;
+		}
+	}else{ /* ↑:0x260000; ↓:0x280000*/}
+
+	cout << "key = " << c << endl;
 
   }
   return 0;
