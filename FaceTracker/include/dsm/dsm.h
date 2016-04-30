@@ -64,7 +64,7 @@ const int mapping[] = {
 	/*21*/	47,	/*right_eye_center_bottom*/
 	/*22*/	44,	/*right_eye_pupil -1*/
 	/*23*/	35,	/*right_nose_out*/
-	/*24*/	59,	/*right_mouth_out*/
+	/*24*/	54,	/*right_mouth_out*/
 	/*25*/	16,	/*right_ear_top -1*/
 	/*26*/	14,	/*right_ear_bottom -1*/
 	/*27*/	15,	/*right_ear_canal -1*/

@@ -48,12 +48,14 @@
 #include <atlconv.h>    //for W2T()
 
 #include "dsm/dsm.h"
+#include "WindowPos.h"
 
 using namespace std;
 using namespace cv;
 
 //画素値取り出しにマクロを使用する．
 #define PX(im,x,y,c) im.data[ 3 * x + im.step * y + c]
+#define WIN_TITLE "Face Tracker"
 
 FACETRACKER::Tracker *pModel;
 Mat im;
@@ -61,12 +63,18 @@ Mat matLOverLay; //LandMark OverLay
 Mat matMouseLay; //the overlay for mouse cursor
 Mat matZoom;     //for zoom image
 Mat matDisp;     //for imshow
+Mat matDispMask;     //for imshow Mask //TODO: 白い背景に特徴点が見にくいのでMaskする(TBD)
+
 Mat matLandMark; //the land mark form dsm image list
+Mat matLandMarkChanged; //Changed LandMark(1) or Not(0)
 Mat matLmLine;   //one line of landmark list
 
 double fZoom = 1;
 bool bGetfoucs = false;
 int indexShape = -1;
+int numFrame = 0;
+
+void DrawDsmLandMark(Mat &img, Mat &matLM);
 
 /*!
 * 空白(スペース，タブ)を削除
@@ -106,26 +114,11 @@ void lostFoucs(Point op) {
 	p[0] = op.x;
 	p[1] = op.y;
 
-	cv::Point p1; cv::Scalar cr,cw;
-
-	cr = CV_RGB(255, 0, 0); //赤色
-	cw = CV_RGB(0xFF,0xFF,0xFF); //白色
-
 	matLOverLay = Mat::zeros(Size(matDisp.cols, matDisp.rows), CV_8UC3);
+	DrawDsmLandMark(matLOverLay, matLmLine);
 
-	for (int i = 0; i < n; i++) {
-
-		Vec3w &p = matLmLine.at<Vec3w>(0, i);
-		Point p1(p[0], p[1]);  //0:x, 1:y ,2:t
-		if (0 == p[2])
-		{
-			circle(matLOverLay, p1, 2, cr);
-		}
-		else {
-			circle(matLOverLay, p1, 2, cw);
-		}
-	}
-
+	//Changed LandMark(1) or Not(0)
+	matLandMarkChanged.at<Vec3w>(numFrame, 0)[0] = 1;
 
 	bGetfoucs = false;
 	indexShape = -1;
@@ -133,29 +126,43 @@ void lostFoucs(Point op) {
 
 void fresh() {
 
-	add(im, matLOverLay, matDisp);
-	add(matDisp, matMouseLay, matDisp);
+	//TODO: 白い背景に特徴点が見にくいのでMaskする(TBD)
+	matDisp = Mat::zeros(matLOverLay.rows, matLOverLay.cols, CV_8UC3);
+	add(matLOverLay, matMouseLay, matDisp);
+	cvtColor(matDisp, matDispMask, CV_RGB2GRAY);
+	threshold(matDispMask,matDispMask, 10, 255, THRESH_BINARY);
 
-	resize(matDisp, matZoom, Size(matDisp.cols * fZoom, matDisp.rows * fZoom));
+	Mat img;
+	Mat imgMaskRGB;
+	cvtColor(matDispMask, imgMaskRGB, CV_GRAY2BGR);
 
-	imshow("Face Tracker", matZoom);
+	bitwise_or(im, imgMaskRGB, img);
+	bitwise_xor(img, matDisp, img);
+
+	//bitwise_and(matDisp, matMouseLay, matDisp, matDispMask);
+
+	resize(img, matZoom, Size(matDisp.cols * fZoom, matDisp.rows * fZoom));
+
+	imshow(WIN_TITLE, matZoom);
+	//imshow("Mask", matDisp);
+	movWindow2Center(WIN_TITLE);
 }
+
 //While wheel be scroll one time ,the image will be zoom ±10% from 100%-200%
 void Zoom(int delta) {
-
 	if (delta < 0) {
-		fZoom *= 1.1;
+		fZoom /= 1.1;
 	}
 	else if (delta > 0)
 	{
-		fZoom /= 1.1;
+		fZoom *= 1.1;
 	}
 	else {
 		//redraw only
 	}
 
-	if (fZoom > 2) {
-		fZoom = 2;
+	if (fZoom > 3) {
+		fZoom = 3;
 	}
 
 	if (fZoom < 1) {
@@ -164,10 +171,47 @@ void Zoom(int delta) {
 
 }
 
+void dispLandMarkInfo(int x, int y) {
+	Mat matZoomMouseLay = Mat::zeros(Size(matZoom.cols, matZoom.rows), CV_8UC3);
+	Point op = cvtOrgCoordinate(Point(x, y));
 
+	//左右のどちらに表示するか
+	int side = 1;
+	if (14 <= indexShape && indexShape <= 27) { side = 1; }
+	else { side = -1; }
+
+	//LandMark表示
+	cv::circle(matZoomMouseLay, Point(x,y), 1, CV_RGB(0xFF, 0x00, 0x00), 2);
+
+	//吹き出し線の表示
+	cv::line(matZoomMouseLay, Point(x,y), (Point(x + (15 * side), y - 20)), CV_RGB(0xFF, 0x00, 0x00));
+	cv::line(matZoomMouseLay, (Point(x + (15 * side), y - 20)), (Point(x + ((strlen(nameLandMark[indexShape]) * 10 )*side), y - 20)), CV_RGB(0xFF, 0x00, 0x00));
+
+	//LandMark名の表示
+	cv::putText(matZoomMouseLay, nameLandMark[indexShape], (Point(x + (20 * side) + (strlen(nameLandMark[indexShape]) * 4.2 * (side - 1)), y - 33)), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0x00, 0xFF, 0x00));
+
+	//座標の表示
+	cv::putText(matZoomMouseLay, "(" + std::to_string(op.x) + ", " + std::to_string(op.y) + ")", (Point(x + (20 * side) + (strlen(nameLandMark[indexShape]) * 4.2 * (side - 1)), y + 3)), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0x00, 0xFF, 0x00));
+
+	//更新
+	//fresh();
+
+	Mat matZMLMask;
+	cvtColor(matZoomMouseLay, matZMLMask, CV_RGB2GRAY);
+	threshold(matZMLMask, matZMLMask, 10, 255, THRESH_BINARY);
+
+	Mat img;
+	Mat imgMaskRGB;
+	cvtColor(matZMLMask, imgMaskRGB, CV_GRAY2BGR);
+
+	bitwise_or(matZoom, imgMaskRGB, img);
+	bitwise_xor(img, matZoomMouseLay, img);
+
+
+	imshow(WIN_TITLE, img);
+}
 
 int findShape(Point op,Mat &shape) {
-
 	int n = shape.cols;// rows / 2;
 	Point p1;
 	Scalar cr = CV_RGB(0xFF, 0x00, 0x00); //赤色
@@ -180,7 +224,7 @@ int findShape(Point op,Mat &shape) {
 		//p1 = cv::Point(shape.at<double>(i, 0), shape.at<double>(i + n, 0));
 		Vec3w &p = shape.at<Vec3w>(i);
 
-		if (p[2] != 0) continue;
+		//if (p[2] != 0) continue;
 		p1 = cv::Point(p[0], p[1]);// shape.at<double>(i + n, 0));
 
 
@@ -201,29 +245,51 @@ int findShape(Point op,Mat &shape) {
 	return -1;
 }
 
+int chgLMStatus(int Index, Mat &shape) {
+	
+	int n = shape.cols;
+	if (Index < 0 || Index > n) return -1;
+
+	Vec3w &p = shape.at<Vec3w>(Index);
+
+	//loop t form 0 to 3
+	//0:見える 1:ぼやける 2:隠れだ 3:切れた
+	p[2] ++;
+	(p[2] > 3) ? p[2] = 0 : 0;
+
+	return p[2];
+
+}
+
 void onMouseMove_Shift(int x, int y, void *p = NULL) {
-
-	Point op;
-
-	op = cvtOrgCoordinate(Point(x, y));
-
 	if (!bGetfoucs) {
+		Point op = cvtOrgCoordinate(Point(x, y));
 		int i = findShape(op, matLmLine);// pModel->_shape);
 		if (i >= 0) {
 			getFoucs(i);
+			dispLandMarkInfo(x,y);
 		}
 	}
 }
 
 void onMouseMove(int x, int y, void *p = NULL){
-	
 	if(bGetfoucs) {
 		//move foucs cursor
-		Point op;
-		op = cvtOrgCoordinate(Point(x, y));
-		Scalar c = CV_RGB(0xFF, 0x00, 0x00); //赤色
+		dispLandMarkInfo(x, y);
+	}
+}
+
+void onMouseDBClick(int x, int y, void *p = NULL) {
+	if (!bGetfoucs) {
+		//
+		Point op = cvtOrgCoordinate(Point(x, y));
+		int index = findShape(op, matLmLine);// pModel->_shape);
+		int t = chgLMStatus(index, matLmLine);
+
+		matLOverLay = Mat::zeros(Size(matDisp.cols, matDisp.rows), CV_8UC3);
+		DrawDsmLandMark(matLOverLay, matLmLine);
 		matMouseLay = Mat::zeros(Size(matDisp.cols, matDisp.rows), CV_8UC3);
-		cv::circle(matMouseLay, op, 1, c, 2);
+		cout << "t= " << t << endl;
 		fresh();
 	}
 }
@@ -255,6 +321,13 @@ void onMouse(int event, int x, int y, int flag, void*)
 		break;
 	case cv::EVENT_RBUTTONDOWN:
 		desc += "RBUTTON_DOWN";
+		if (bGetfoucs) {
+			//cancel処理
+			Vec3w &p = matLmLine.at<Vec3w>(indexShape);
+			lostFoucs(Point(p[0], p[1]));
+			matMouseLay = Mat::zeros(Size(matDisp.cols, matDisp.rows), CV_8UC3);
+			fresh();
+		}
 		break;
 	case cv::EVENT_MBUTTONDOWN:
 		desc += "MBUTTON_DOWN";
@@ -270,6 +343,8 @@ void onMouse(int event, int x, int y, int flag, void*)
 		break;
 	case cv::EVENT_LBUTTONDBLCLK:
 		desc += "LBUTTON_DBLCLK";
+		//Change Status of Landmark
+		onMouseDBClick(x, y);
 		break;
 	case cv::EVENT_RBUTTONDBLCLK:
 		desc += "RBUTTON_DBLCLK";
@@ -285,7 +360,7 @@ void onMouse(int event, int x, int y, int flag, void*)
 		delta = getMouseWheelDelta(flag);
 		Zoom(delta);
 		fresh();
-		cout << "MOUSE WHEEL (" << delta << ")" << endl;
+		//cout << "MOUSE WHEEL (" << delta << ")" << endl;
 		break;
 
 	}
@@ -304,7 +379,7 @@ void onMouse(int event, int x, int y, int flag, void*)
 	if (flag & cv::EVENT_FLAG_ALTKEY)
 		desc += " + ALT";
 
-	std::cout << desc << " (" << x << ", " << y << ")" << std::endl;
+	//std::cout << desc << " (" << x << ", " << y << ")" << std::endl;
 }
 
 void tran_Shape2LandMark(Mat &shape, Mat &visi, Mat &lm) {
@@ -379,20 +454,35 @@ void Draw(cv::Mat &image,cv::Mat &shape,cv::Mat &con,cv::Mat &tri,cv::Mat &visi)
 }
 
 void DrawDsmLandMark(Mat &img,Mat &matLM) {
+
+	Scalar c0 = CV_RGB(255, 0, 0); //赤色      t=0 見える
+	Scalar c1 = CV_RGB(0, 0, 255); //青色  t=1 ぼやける
+	Scalar c2 = CV_RGB(0, 255, 0); //緑色  t=2 隠れた
+	Scalar c3 = CV_RGB(255, 255, 255); //白色  t=3 切れた
+
+	int radius = 2;
+	int thickness = 1;
 	
-	Scalar cr = CV_RGB(255, 0, 0); //赤色
-	Scalar cw = CV_RGB(255, 255, 255); //白色
 
 	for (int i = 0; i < matLM.cols; i++) {
 
 		Vec3w &p= matLM.at<Vec3w>(0,i);
 		Point p1(p[0],p[1]);  //0:x, 1:y ,2:t
-		if (0 == p[2])
-		{
-			circle(img, p1, 2, cr);
-		}
-		else {
-			circle(img, p1, 2, cw);
+
+		switch(p[2]){
+
+		case 0:
+			circle(img, p1, radius, c0, thickness);
+			break;
+		case 1:
+			circle(img, p1, radius, c1, thickness);
+			break;
+		case 2:
+			circle(img, p1, radius, c2, thickness);
+			break;
+		default:
+			circle(img, p1, radius, c3, thickness);
+			break;
 		}
 		//cv::putText(image, std::to_string(i), p1, FONT_HERSHEY_SIMPLEX, 0.3, c);
 	}
@@ -533,7 +623,6 @@ vector<string> get_all_bmp_files_names_within_list(string list)
 }
 
 void save_DSM_Modi_Result(string fn,Mat &lm) {
-
 	ifstream ifs(fn);
 	if (ifs.fail()) {
 		std::cerr << "failed to open dsm list!" << std::endl;
@@ -556,10 +645,10 @@ void save_DSM_Modi_Result(string fn,Mat &lm) {
 		return;
 	}
 
-
 	while (getline(ifs, lineBuf))
 	{
 		istringstream stream(lineBuf);
+		string imagefilename;
 
 		if (i < 5) {
 			//1行2列目　画像格納フォルダ
@@ -570,21 +659,27 @@ void save_DSM_Modi_Result(string fn,Mat &lm) {
 			i++;
 			continue;
 		}
-		break;
-	}
 
-	for (int i = 0; i < lm.rows; i++) {
-		Mat line(lm(Rect(0,i,lm.cols,1)));
-		ofs << i + 1;
+		//画像ファイル名の取得と出力
+		getline(stream, imagefilename, ',');
+		ofs << imagefilename << ", ";
+
+		//画像No.の出力
+		ofs << i -4;
+
+		//x,y,tの出力
+		Mat line(lm(Rect(0, i - 5, lm.cols, 1)));
 		for (int j = 0; j < line.cols; j++) {
 			Vec3w p = line.at<Vec3w>(j);
-			ofs << "," << p[0] << "," << p[1] << "," << p[2];
+			ofs << " " << "," << p[0] << "," << p[1] << "," << p[2];
 		}
 		ofs << endl;
+
+		//次の行
+		i++;
+
 	}
-
 	ofs.close();
-
 }
 
 //@param  IN   fn 画像名とLandMarkデータを保存するリストファイル名
@@ -626,6 +721,7 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 			//2行目　ファイル数  189
 			rows = 189;
 			//3行目　LandMark名称　全部で35個ある
+			matLandMarkChanged = Mat::zeros(Size(2, rows), CV_16UC3);
 			cols = 35;
 			//とりあえず、固定値でMatを初期化
 			lm = Mat::zeros(Size(cols, rows), CV_16UC3);
@@ -671,7 +767,7 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 					p[(j - 2 - 1) % 3] = val;    //0:x 1:y 2:t
 
 				}
-				cout << token << "(" << i << "," << j << "),";
+				//cout << token << "(" << i << "," << j << "),";
 				j++;
 
 				if (cols >= 0 && (j - 2) > (cols * 3)) {
@@ -679,6 +775,9 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 				}
 			}
 		}
+
+		matLandMarkChanged.at<cv::Vec3w>(i - 5, 0);
+
 		cout << endl;
 		i++;
 
@@ -713,7 +812,7 @@ int main(int argc, const char* argv[])
   //initialize camera and display window
   cv::Mat frame,gray; double fps=0; char sss[256]; std::string text; 
   
-  //CvCapture* camera = cvCreateCameraCapture(CV_CAP_ANY); if (!camera)return -1;
+  getScreenCenter();
   //cv::VideoCapture cap(CV_CAP_ANY);
   //if (!cap.isOpened()) {
 	 // cout << "Fail to open camera!" << endl;
@@ -728,7 +827,7 @@ int main(int argc, const char* argv[])
 	  bmpList = get_all_bmp_files_names_within_folder(path);
   }
   else {
-//	  bmpList = get_all_bmp_files_names_within_list(argv[1]);
+	  //bmpList = get_all_bmp_files_names_within_list(argv[1]);
 	  bmpList = get_Image_WithLandMark_From_dsmlist(argv[1], matLandMark);
   }
   //the parament for image save
@@ -737,16 +836,14 @@ int main(int argc, const char* argv[])
   param.push_back(3);
 
   int64 t1,t0 = cvGetTickCount(); int fnum=0;
-  //cvNamedWindow("Face Tracker",1);
+  //cvNamedWindow(WIN_TITLE,1);
   std::cout << "Hot keys: "        << std::endl
-	    << "\t ESC - quit"     << std::endl
+	    << "\t q   - save and quit"     << std::endl
 	    << "\t d   - Redetect" << std::endl
 	    << "\t s   - Save modify result";
 
-  //loop until quit (i.e user presses ESC)
+  //loop until quit (i.e user presses q)
   bool failed = true;
-
-  int numFrame = 0;
 
   path = bmpList.at(0);
   bmpList.erase(bmpList.begin());
@@ -779,7 +876,7 @@ int main(int argc, const char* argv[])
 	  }else{
 		  cv::resize(frame, im, cv::Size((int)scale*frame.cols, (int)scale*frame.rows));
 	  }
-      cv::flip(im,im,1);  //左右反転 
+      //cv::flip(im,im,1);  //特徴点抽出率向上のために暫定で左右反転する
 	  cv::cvtColor(im,gray,CV_BGR2GRAY);
 
     //track this image
@@ -793,20 +890,23 @@ int main(int argc, const char* argv[])
 
 	matLmLine = matLandMark(Rect(0, numFrame, matLandMark.cols, 1));
 
-    if(model.Track(gray,wSize,fpd,nIter,clamp,fTol,fcheck) == 0){
-      int idx = model._clm.GetViewIdx(); 
-	  failed = false;
-	  //Draw(im, model._shape, con, tri, model._clm._visi[idx]);
-	  //Draw(matLOverLay, model._shape, con, tri, model._clm._visi[idx]);
-	  tran_Shape2LandMark(model._shape, model._clm._visi[idx], matLmLine);
-	}else{
-      if(show){
-		  cv::Mat R(im,cvRect(0,0,150,50)); 
-		  R = cv::Scalar(0,0,255);
-	  }
-      model.FrameReset(); 
-	  failed = true;
-    }     
+	if (1 != matLandMarkChanged.at<Vec3w>(numFrame, 0)[0]) { //If Changed LandMark(1), Not load model
+		if (model.Track(gray, wSize, fpd, nIter, clamp, fTol, fcheck) == 0) {
+			int idx = model._clm.GetViewIdx();
+			failed = false;
+			//Draw(im, model._shape, con, tri, model._clm._visi[idx]);
+			//Draw(matLOverLay, model._shape, con, tri, model._clm._visi[idx]);
+			tran_Shape2LandMark(model._shape, model._clm._visi[idx], matLmLine);
+		}
+		else {
+			if (show) {
+				cv::Mat R(im, cvRect(0, 0, 150, 50));
+				R = cv::Scalar(0, 0, 255);
+			}
+			model.FrameReset();
+			failed = true;
+		}
+	}
 
 
 	DrawDsmLandMark(matLOverLay, matLmLine);
@@ -826,42 +926,50 @@ int main(int argc, const char* argv[])
     }
 
 
-	cv::namedWindow("Face Tracker", CV_WINDOW_AUTOSIZE);
+	cv::namedWindow(WIN_TITLE, CV_WINDOW_AUTOSIZE);
 	// マウスイベントに対するコールバック関数を登録
-	cv::setMouseCallback("Face Tracker", onMouse, 0);
+	cv::setMouseCallback(WIN_TITLE, onMouse, 0);
 
 	//add(im, matLOverLay, im);
     //show image and check for user input
-    //imshow("Face Tracker",im); 
+    //imshow(WIN_TITLE,im); 
 	fresh();
 
 	//imwrite(resultFile.str(), im ,param);
 
-    int c = cvWaitKey(0);
 
-	if (c == 27) { //ESC
-		break;
-	}else	if (char(c) == 'd') {
-			model.FrameReset();
-	}
-	else if (char(c) == 's') {
+	//キーボードからの入力待ち
+    int c = cvWaitKey(0);
+	//cout << "key = " << c << endl;
+	switch (c) {
+	case 'q': //save and quit
 		save_DSM_Modi_Result(argv[1], matLandMark);
-	}
-	else if (0x250000 == c) {
-		//←
+		return 0;
+		break;
+	case 'd': //Redetect
+		model.FrameReset();
+		break;
+	case 's': //save
+		save_DSM_Modi_Result(argv[1], matLandMark);
+		break;
+	case 0x250000: //←
 		numFrame--;
 		numFrame < 0 ? (numFrame = 0) : numFrame;
-	}
-	else if (0x270000 == c) {
-		//→
+		break;
+	case 0x270000: //→
 		numFrame++;
 		if (numFrame >= bmpList.size()) {
 			numFrame = 0;
 		}
-	}else{ /* ↑:0x260000; ↓:0x280000*/}
-
-	cout << "key = " << c << endl;
-
+		break;
+	case 0x260000: //↑
+		break;
+	case 0x280000: //↓
+		break;
+	default:
+		break;
+	}
+	
   }
   return 0;
 }

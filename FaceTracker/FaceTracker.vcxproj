@@ -166,6 +166,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\exe\face_tracker.cc" />
+    <ClCompile Include="src\exe\WindowPos.cpp" />
     <ClCompile Include="src\lib\CLM.cc" />
     <ClCompile Include="src\lib\FCheck.cc" />
     <ClCompile Include="src\lib\FDet.cc" />
@@ -187,6 +188,7 @@
     <ClInclude Include="include\FaceTracker\PAW.h" />
     <ClInclude Include="include\FaceTracker\PDM.h" />
     <ClInclude Include="include\FaceTracker\Tracker.h" />
+    <ClInclude Include="include\WindowPos.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
