@@ -48,7 +48,7 @@
 #include <atlconv.h>    //for W2T()
 
 #include "dsm/dsm.h"
-#include "WindowPos.h"
+#include "WindowCom.h"
 
 using namespace std;
 using namespace cv;
@@ -57,16 +57,18 @@ using namespace cv;
 #define PX(im,x,y,c) im.data[ 3 * x + im.step * y + c]
 #define WIN_TITLE "Face Tracker"
 
+#define HELP ".\\resource\\FaceTrackerHelp.png"
+
 FACETRACKER::Tracker *pModel;
 Mat im;
 Mat matLOverLay; //LandMark OverLay
 Mat matMouseLay; //the overlay for mouse cursor
 Mat matZoom;     //for zoom image
 Mat matDisp;     //for imshow
-Mat matDispMask;     //for imshow Mask //TODO: 白い背景に特徴点が見にくいのでMaskする(TBD)
+Mat matDispMask;     //for imshow Mask //白い背景に特徴点が見にくいのでMaskする
 
-Mat matLandMark; //the land mark form dsm image list
-Mat matLandMarkChanged; //Changed LandMark(1) or Not(0)
+Mat matLandMark; //the land mark form dsm image list. The last col is the flag of changed(1) or not(0)
+//Mat matLandMarkChanged; //Changed LandMark(1) or Not(0)
 Mat matLmLine;   //one line of landmark list
 
 double fZoom = 1;
@@ -105,10 +107,12 @@ void getFoucs(int index) {
 
 void lostFoucs(Point op) {
 
-	int n = matLmLine.cols; 
+	int n = matLmLine.cols - 1;
+	bGetfoucs = false;
 
-	if ( indexShape < 0 ||indexShape > n) return;
-
+	if (indexShape < 0 || indexShape >(n - 1)) {
+		return;
+	}
 	Vec3w &p = matLmLine.at<Vec3w>(indexShape);
 
 	p[0] = op.x;
@@ -118,15 +122,15 @@ void lostFoucs(Point op) {
 	DrawDsmLandMark(matLOverLay, matLmLine);
 
 	//Changed LandMark(1) or Not(0)
-	matLandMarkChanged.at<Vec3w>(numFrame, 0)[0] = 1;
+	//The additional last col is the flag of changed(1) or not(0)
+	matLmLine.at<Vec3w>(n)[0] = 1;
 
-	bGetfoucs = false;
 	indexShape = -1;
 }
 
 void fresh() {
 
-	//TODO: 白い背景に特徴点が見にくいのでMaskする(TBD)
+	//白い背景に特徴点が見にくいのでMaskする
 	matDisp = Mat::zeros(matLOverLay.rows, matLOverLay.cols, CV_8UC3);
 	add(matLOverLay, matMouseLay, matDisp);
 	cvtColor(matDisp, matDispMask, CV_RGB2GRAY);
@@ -172,6 +176,12 @@ void Zoom(int delta) {
 }
 
 void dispLandMarkInfo(int x, int y) {
+
+	//indexShape限界の判断が必要
+	if (indexShape >= numLandMark) {
+		cout << "IndexShape is out of range!" << endl;
+		return;
+	}
 	Mat matZoomMouseLay = Mat::zeros(Size(matZoom.cols, matZoom.rows), CV_8UC3);
 	Point op = cvtOrgCoordinate(Point(x, y));
 
@@ -212,7 +222,7 @@ void dispLandMarkInfo(int x, int y) {
 }
 
 int findShape(Point op,Mat &shape) {
-	int n = shape.cols;// rows / 2;
+	int n = shape.cols -1 ;// rows / 2;
 	Point p1;
 	Scalar cr = CV_RGB(0xFF, 0x00, 0x00); //赤色
 	Scalar cw = CV_RGB(0xFF, 0xFF, 0xFF); //白色 
@@ -247,7 +257,7 @@ int findShape(Point op,Mat &shape) {
 
 int chgLMStatus(int Index, Mat &shape) {
 	
-	int n = shape.cols;
+	int n = shape.cols - 1;
 	if (Index < 0 || Index > n) return -1;
 
 	Vec3w &p = shape.at<Vec3w>(Index);
@@ -393,7 +403,7 @@ void tran_Shape2LandMark(Mat &shape, Mat &visi, Mat &lm) {
 		p[1] = p1.y;
 		p[2] = 0;
 		if (visi.at<int>(mapping[i], 0) == 0) {
-			p[2] = 2; //隠れたTBD
+			p[2] = 2; //t = 2 隠れた
 		}
 
 	}
@@ -464,7 +474,7 @@ void DrawDsmLandMark(Mat &img,Mat &matLM) {
 	int thickness = 1;
 	
 
-	for (int i = 0; i < matLM.cols; i++) {
+	for (int i = 0; i < matLM.cols - 1; i++) {
 
 		Vec3w &p= matLM.at<Vec3w>(0,i);
 		Point p1(p[0],p[1]);  //0:x, 1:y ,2:t
@@ -572,16 +582,21 @@ int parse_cmd(int argc, const char** argv,
 vector<string> get_all_bmp_files_names_within_folder(string folder)
 {
 	vector<string> names;
-	char search_path[200];
-	char buf[1000];
-	sprintf(search_path, "%s/*.bmp", folder.c_str());
+	//char search_path[MAX_PATH];
+	char buf[MAX_PATH];
+	//sprintf(search_path, "%s/*.bmp", folder.c_str());
 	WIN32_FIND_DATA fd;
 
-	string name(search_path);
+	//string name(search_path);
+	stringstream oname;
+	oname << folder << "*.bmp";
+	string name = oname.str();
 	//For using CopyFile, string must be convert to TCHAR
 	wstring wName(name.begin(), name.end());
 	TCHAR *tcName = W2T((LPWSTR)(wName.c_str()));
 
+	//1行目は格納パス
+	names.push_back(folder);
 
 	HANDLE hFind = ::FindFirstFile(tcName, &fd);
 	if (hFind != INVALID_HANDLE_VALUE) {
@@ -623,9 +638,14 @@ vector<string> get_all_bmp_files_names_within_list(string list)
 }
 
 void save_DSM_Modi_Result(string fn,Mat &lm) {
+	if (fn.empty()) {
+		cout << "Save file name is empty!" << std::endl;
+		return;
+	}
 	ifstream ifs(fn);
 	if (ifs.fail()) {
-		std::cerr << "failed to open dsm list!" << std::endl;
+		//TBD Create a new file.
+		cout << "failed to open dsm list!" << std::endl;
 		return;
 	}
 
@@ -641,6 +661,10 @@ void save_DSM_Modi_Result(string fn,Mat &lm) {
 
 	ofstream ofs(saveFn.str()); //ファイル出力ストリーム
 	if (ofs.fail()) {
+
+		//TBD 
+		//ファイルが存在しない時、新たに作成
+
 		std::cerr << "failed to create " << saveFn.str() << "!" << std::endl;
 		return;
 	}
@@ -682,6 +706,58 @@ void save_DSM_Modi_Result(string fn,Mat &lm) {
 	ofs.close();
 }
 
+void save_DSM_Modi_Result_AsNew(string fn, Mat &lm, vector<string> bmpList) {
+	if (fn.empty()) {
+		cout << "Save file name is empty!" << std::endl;
+		return;
+	}
+
+
+	stringstream saveFn;
+	//string token;
+
+	//istringstream s(fn);
+	//getline(s, token, '.');
+
+	//saveFn << token << "_" << getTickCount() << ".csv";
+
+	ofstream ofs(fn.c_str()); //ファイル出力ストリーム
+	if (ofs.fail()) {
+
+		std::cout << "failed to create " << saveFn.str() << "!" << std::endl;
+		return;
+	}
+
+	//1行2列目　画像格納フォルダ
+	ofs << "フォルダ名," << dirnameOf(fn) << "\\" << endl;
+	//2行目　ファイル数  189
+	ofs << "ファイル数," << bmpList.size() << endl;
+	//3行目　LandMark名称　全部で35個ある
+	ofs << lineLandMarkName << endl;
+	//4行名　5行目以下データのタイトル
+	ofs << lineTilte << endl;
+
+	for (int i = 0; i < lm.rows; i++){
+
+
+		//画像ファイル名の取得と出力
+		string imagefilename = bmpList.at(i);
+		ofs << imagefilename << ", ";
+
+		//画像No.の出力
+		ofs << i + 1;
+
+		//x,y,tの出力
+		Mat line(lm(Rect(0, i , lm.cols -1, 1)));
+		for (int j = 0; j < line.cols; j++) {
+			Vec3w p = line.at<Vec3w>(j);
+			ofs << " " << "," << p[0] << "," << p[1] << "," << p[2];
+		}
+		ofs << endl;
+
+	}
+	ofs.close();
+}
 //@param  IN   fn 画像名とLandMarkデータを保存するリストファイル名
 //@param  OUT  lm	  LandMark Matriex
 //@Return name 画像ファイル名配列  0番目は画像格納フォルダ
@@ -692,6 +768,7 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 	std::ifstream ifs(fn);
 	if (ifs.fail()) {
 		std::cerr << "failed to open dsm list!" << std::endl;
+		imgList.clear();
 		return imgList;
 	}
 
@@ -699,6 +776,7 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 	int i = 1;
 	int rows = -1;
 	int cols = -1;
+	bool changed = false;
 
 	while (getline(ifs, lineBuf))
 	{
@@ -721,8 +799,9 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 			//2行目　ファイル数  189
 			rows = 189;
 			//3行目　LandMark名称　全部で35個ある
-			matLandMarkChanged = Mat::zeros(Size(2, rows), CV_16UC3);
-			cols = 35;
+			//The additional last col is the flag of changed(1) or not(0)
+			//matLandMarkChanged = Mat::zeros(Size(2, rows), CV_16UC3);
+			cols = 35 + 1;
 			//とりあえず、固定値でMatを初期化
 			lm = Mat::zeros(Size(cols, rows), CV_16UC3);
 //			lm = Mat::zeros(Size(cols, rows), CV_32FC3);
@@ -733,6 +812,10 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 		}
 		else
 		{
+			if (cols < 0)
+			{//Failed in get LandMark name
+				break;
+			}
 			int j = 1;
 			//1行のうち、文字列とコンマを分割する
 			while (getline(stream, token, ',')) {
@@ -764,19 +847,30 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 						val = (val > 0x0FFFF) ? 0 : val;
 					}
 
+					//Any data means it be edited by someone.
+					(val > 0) ? changed = true : 0;
 					p[(j - 2 - 1) % 3] = val;    //0:x 1:y 2:t
 
 				}
 				//cout << token << "(" << i << "," << j << "),";
 				j++;
 
-				if (cols >= 0 && (j - 2) > (cols * 3)) {
+				if ((j - 2) > (cols * 3)) {
+					//Over the last landmark status data
+					cols = -1;
 					break;
 				}
 			}
 		}
 
-		matLandMarkChanged.at<cv::Vec3w>(i - 5, 0);
+		//matLandMarkChanged.at<cv::Vec3w>(i - 5, 0);
+		//The last col is the flag of changed(1) or not(0)
+		//
+		if (changed) {
+			Vec3w &p = lm.at<cv::Vec3w>((i - 4 - 1), cols - 1);  //row,col
+			p[0] = 1;
+			changed = false;
+		}
 
 		cout << endl;
 		i++;
@@ -791,6 +885,26 @@ vector<string> get_Image_WithLandMark_From_dsmlist(string fn,Mat &lm)
 	return imgList;
 }
 
+void make_Empty_LandMark(vector<string> bmpList, Mat &lm)
+{
+
+	//1行目は格納パス
+	bmpList.erase(bmpList.begin());
+
+	int rows = bmpList.size();
+
+	//3行目　LandMark名称　全部で35個ある
+	//The additional last col is the flag of changed(1) or not(0)
+	int cols = numLandMark + 1;
+
+	cout << "size of namelandmak = " << cols << endl;
+
+	//とりあえず、固定値でMatを初期化
+	lm = Mat::zeros(Size(cols, rows), CV_16UC3);
+
+	return;
+}
+
 //=============================================================================
 int main(int argc, const char* argv[])
 {
@@ -799,19 +913,23 @@ int main(int argc, const char* argv[])
   bool fcheck = false; double scale = 1; int fpd = -1; bool show = true;
   if(parse_cmd(argc,argv,ftFile,conFile,triFile,fcheck,scale,fpd)<0)return 0;
 
-  //set other tracking parameters
-  std::vector<int> wSize1(1); wSize1[0] = 7;
-  std::vector<int> wSize2(3); wSize2[0] = 11; wSize2[1] = 9; wSize2[2] = 7;
-  int nIter = 5; double clamp=3,fTol=0.01; 
-  FACETRACKER::Tracker model(ftFile);
-  pModel = &model;
+  
+  //TCHAR szDirectoryName[MAX_PATH];
+  //GetCurrentDirectory(
+	 // sizeof(szDirectoryName) / sizeof(szDirectoryName[0]),
+	 // szDirectoryName);
 
-  cv::Mat tri=FACETRACKER::IO::LoadTri(triFile);
-  cv::Mat con=FACETRACKER::IO::LoadCon(conFile);
-  
-  //initialize camera and display window
-  cv::Mat frame,gray; double fps=0; char sss[256]; std::string text; 
-  
+  //printf("Before: %S \n", szDirectoryName);
+
+  //openFolderDialog(WIN_TITLE);
+
+  //GetCurrentDirectory(
+	 // sizeof(szDirectoryName) / sizeof(szDirectoryName[0]),
+	 // szDirectoryName);
+
+  //printf("After: %S \n", szDirectoryName);
+
+
   getScreenCenter();
   //cv::VideoCapture cap(CV_CAP_ANY);
   //if (!cap.isOpened()) {
@@ -824,12 +942,50 @@ int main(int argc, const char* argv[])
   string path(".\\");
   //bmpList = get_all_bmp_files_names_within_list(".\\list_050deg.txt");
   if (NULL == argv[1]) {
-	  bmpList = get_all_bmp_files_names_within_folder(path);
+	  //Command lineでBMPファイルList（*.csv）を指定されない場合は
+	  path = openFolderDialog(WIN_TITLE);
+	  if (!path.empty()) {
+		  bmpList = get_all_bmp_files_names_within_folder(path);
+	  }
+
+	  //Make empty matLandMark
+	  make_Empty_LandMark(bmpList,matLandMark);
   }
   else {
 	  //bmpList = get_all_bmp_files_names_within_list(argv[1]);
 	  bmpList = get_Image_WithLandMark_From_dsmlist(argv[1], matLandMark);
   }
+
+  if (bmpList.empty()) {
+	  //
+	  cout << "There is no image to be found!" << endl;
+	  Mat help = imread(HELP);
+	  if (!help.empty()) {
+		  imshow(HELP, help);
+		  waitKey(0);
+	  }
+	  return -1;
+
+  }
+
+  //1行目は格納パス
+  path = bmpList.at(0);
+  bmpList.erase(bmpList.begin());
+
+  //set other tracking parameters
+  std::vector<int> wSize1(1); wSize1[0] = 7;
+  std::vector<int> wSize2(3); wSize2[0] = 11; wSize2[1] = 9; wSize2[2] = 7;
+  int nIter = 5; double clamp = 3, fTol = 0.01;
+  FACETRACKER::Tracker model(ftFile);
+  pModel = &model;
+
+  cv::Mat tri = FACETRACKER::IO::LoadTri(triFile);
+  cv::Mat con = FACETRACKER::IO::LoadCon(conFile);
+
+  //initialize camera and display window
+  cv::Mat frame, gray; double fps = 0; char sss[256]; std::string text;
+
+
   //the parament for image save
   vector<int> param = vector<int>(2);
   param.push_back(CV_IMWRITE_PNG_COMPRESSION);
@@ -845,9 +1001,6 @@ int main(int argc, const char* argv[])
   //loop until quit (i.e user presses q)
   bool failed = true;
 
-  path = bmpList.at(0);
-  bmpList.erase(bmpList.begin());
-
   while(!bmpList.empty()){ 
 
     //grab image, resize and flip
@@ -855,7 +1008,7 @@ int main(int argc, const char* argv[])
 	  stringstream resultFile;
 
 	  fileName << path << bmpList.at(numFrame);
-	  resultFile << "./result/" << bmpList.at(0);
+	  //resultFile << "./result/" << bmpList.at(0);
 
 	  //bmpList.erase(bmpList.begin());
 	  frame = cv::imread(fileName.str().c_str());
@@ -890,7 +1043,7 @@ int main(int argc, const char* argv[])
 
 	matLmLine = matLandMark(Rect(0, numFrame, matLandMark.cols, 1));
 
-	if (1 != matLandMarkChanged.at<Vec3w>(numFrame, 0)[0]) { //If Changed LandMark(1), Not load model
+	if (1 != matLmLine.at<Vec3w>(matLmLine.cols - 1)[0]) { //If Changed LandMark(1), Not load model
 		if (model.Track(gray, wSize, fpd, nIter, clamp, fTol, fcheck) == 0) {
 			int idx = model._clm.GetViewIdx();
 			failed = false;
@@ -899,6 +1052,7 @@ int main(int argc, const char* argv[])
 			tran_Shape2LandMark(model._shape, model._clm._visi[idx], matLmLine);
 		}
 		else {
+			//TBD Load default land mark;
 			if (show) {
 				cv::Mat R(im, cvRect(0, 0, 150, 50));
 				R = cv::Scalar(0, 0, 255);
@@ -941,9 +1095,16 @@ int main(int argc, const char* argv[])
 	//キーボードからの入力待ち
     int c = cvWaitKey(0);
 	//cout << "key = " << c << endl;
+	int ret;
 	switch (c) {
 	case 'q': //save and quit
-		save_DSM_Modi_Result(argv[1], matLandMark);
+		ret = MessageBox(NULL,L"結果を保存しますか？",L"確認", MB_YESNO);
+		if (IDYES == ret) {
+			string fileName = saveFileDialog(WIN_TITLE);
+			if (!fileName.empty()) {
+				save_DSM_Modi_Result_AsNew(fileName, matLandMark, bmpList);
+			}
+		}
 		return 0;
 		break;
 	case 'd': //Redetect
